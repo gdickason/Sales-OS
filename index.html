@@ -25,8 +25,20 @@
 const { useState, useEffect, useRef, createContext, useContext } = React;
 
 // ── Constants ──────────────────────────────────────────────────────────────
-const TASKS_KEY     = "insendra_v5";
-const PROPOSALS_KEY = "insendra_proposals_v1";
+const TASKS_KEY = "insendra_v5";
+const DEALS_KEY = "insendra_deals_v1";
+
+const STAGES = [
+  {key:"pending",     label:"Pending",            c:"#7474B8", closed:false},
+  {key:"meeting",     label:"Meeting Scheduled",  c:"#62C1FF", closed:false},
+  {key:"discovery",   label:"Discovery",          c:"#B58FFF", closed:false},
+  {key:"audit",       label:"Audit Presentation", c:"#FFB83F", closed:false},
+  {key:"negotiating", label:"Negotiating",        c:"#FF8C3F", closed:false},
+  {key:"contract",    label:"Contract Sent",      c:"#FFD060", closed:false},
+  {key:"won",         label:"Won",                c:"#3FD9A0", closed:true},
+  {key:"lost",        label:"Lost",               c:"#FF5A5A", closed:true},
+  {key:"disqualified",label:"Disqualified",       c:"#555577", closed:true},
+];
 
 // ── Theme ──────────────────────────────────────────────────────────────────
 const DARK = {
@@ -104,12 +116,6 @@ function recurDatesInMonth(task, year, month) {
   return res;
 }
 
-function getWeekStart() {
-  const d=new Date(), day=d.getDay();
-  d.setDate(d.getDate()-(day===0?6:day-1));
-  d.setHours(0,0,0,0); return d;
-}
-
 function lsGet(key) { try { return JSON.parse(localStorage.getItem(key)); } catch { return null; } }
 function lsSet(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch {} }
 
@@ -122,6 +128,19 @@ const SEED_TASKS = [
   {id:"s5",company:"Insendra",        contact:null,   title:null,action:"Cold call 20 prospects daily",        notes:"Daily cold call routine targeting 20 fresh prospects.",                          followUpDate:daysFromNow(1),priority:"high",  category:"ops",          recurrence:{type:"daily",label:"daily"},subtasks:[],status:"not_started",createdAt:new Date().toISOString()},
   {id:"s6",company:"Insendra",        contact:null,   title:null,action:"Research and outreach to agencies",   notes:"Research potential agency partnership targets and initiate outreach.",              followUpDate:null,          priority:"medium",category:"partnerships", recurrence:null,subtasks:[],status:"not_started",createdAt:new Date().toISOString()},
   {id:"s7",company:"Insendra",        contact:null,   title:null,action:"Research and outreach to VCs",        notes:"Research VC firms and initiate outreach for potential partnerships.",              followUpDate:null,          priority:"medium",category:"partnerships", recurrence:null,subtasks:[],status:"not_started",createdAt:new Date().toISOString()},
+];
+
+// ── Seed deals ─────────────────────────────────────────────────────────────
+const SEED_DEALS = [
+  {id:"d1",name:"Moment",            contact:null,    value:3500,stage:"discovery",  priority:"high",  owner:"Garrett",nextStep:"Send audit proposal",    notes:"Strong fit for full email management.",  isStalled:false,createdAt:"2026-03-15T10:00:00.000Z",closedAt:null},
+  {id:"d2",name:"MRE's World",       contact:null,    value:2500,stage:"meeting",    priority:"medium",owner:"Jeremy", nextStep:"Book discovery call",      notes:"Responded to cold outreach.",            isStalled:false,createdAt:"2026-04-01T10:00:00.000Z",closedAt:null},
+  {id:"d3",name:"Cordaroys",         contact:null,    value:4000,stage:"negotiating",priority:"high",  owner:"Garrett",nextStep:"Finalize pricing",         notes:"Discussing scope and retainer structure.",isStalled:false,createdAt:"2026-02-10T10:00:00.000Z",closedAt:null},
+  {id:"d4",name:"Rancourt",          contact:null,    value:3000,stage:"discovery",  priority:"medium",owner:"Garrett",nextStep:"Share audit findings",     notes:"Small but quality brand.",               isStalled:true, createdAt:"2026-03-20T10:00:00.000Z",closedAt:null},
+  {id:"d5",name:"Palermo House",     contact:null,    value:2500,stage:"pending",    priority:"low",   owner:"Jeremy", nextStep:"Send intro email",         notes:"Warm intro from partner.",               isStalled:false,createdAt:"2026-04-10T10:00:00.000Z",closedAt:null},
+  {id:"d6",name:"Beefcake / DuxBux", contact:null,    value:5000,stage:"contract",   priority:"high",  owner:"Garrett",nextStep:"Await signed contract",    notes:"Two brands under same owner.",           isStalled:false,createdAt:"2026-02-01T10:00:00.000Z",closedAt:null},
+  {id:"d7",name:"GoFreeAgent",       contact:null,    value:2000,stage:"audit",      priority:"medium",owner:"Jeremy", nextStep:"Present audit this week",  notes:"SaaS brand, smaller list.",              isStalled:false,createdAt:"2026-03-28T10:00:00.000Z",closedAt:null},
+  {id:"d8",name:"La Petite Maison",  contact:"Nan",   value:3500,stage:"meeting",    priority:"high",  owner:"Garrett",nextStep:"Book intro call",          notes:"Weekly check-ins ongoing.",              isStalled:false,createdAt:"2026-04-05T10:00:00.000Z",closedAt:null},
+  {id:"d9",name:"kloTH",             contact:"Katia", value:2800,stage:"pending",    priority:"high",  owner:"Jeremy", nextStep:"Book intro call",          notes:"Weekly check-ins ongoing.",              isStalled:false,createdAt:"2026-04-08T10:00:00.000Z",closedAt:null},
 ];
 
 // ── Editable field ─────────────────────────────────────────────────────────
@@ -603,172 +622,349 @@ function TasksPage({ tasks, onUpdate, onStatusChange, onDelete, onAdd }) {
   );
 }
 
-// ── Proposal Log Modal ─────────────────────────────────────────────────────
-function ProposalLogModal({ onConfirm, onClose }) {
+// ── Deal Components ────────────────────────────────────────────────────────
+function DealCard({ deal, tasks, onClick }) {
   const T = useT();
-  const inp = {width:"100%",background:T.raised,border:`0.5px solid ${T.borderMd}`,borderRadius:8,padding:"10px 12px",color:T.tx,fontFamily:"monospace",fontSize:13,outline:"none"};
-  const lbl = {fontSize:10,fontFamily:"monospace",color:T.tx3,letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:6,display:"block"};
-  const [data, setData] = useState({company:"",jobTitle:"",notes:"",coverLetter:""});
-  const set = (k,v) => setData(p=>({...p,[k]:v}));
-  const confirm = () => {
-    if(!data.company.trim()) return;
-    onConfirm({id:uid(),company:data.company||"Unknown",jobTitle:data.jobTitle||"Unknown role",notes:data.notes,proposalText:data.coverLetter,status:"sent",appliedAt:new Date().toISOString(),convertedAt:null});
-  };
+  const stage = STAGES.find(s=>s.key===deal.stage)||STAGES[0];
+  const linked = tasks.filter(t=>t.dealId===deal.id&&t.status!=="done");
+  const overdue = linked.filter(t=>getUrgency(t)==="overdue");
+  const priColor = {high:T.uOv,medium:T.uTd,low:T.cDeals}[deal.priority]||T.tx3;
   return (
-    <div style={{position:"fixed",inset:0,background:T.overlay,zIndex:2000,display:"flex",alignItems:"center",justifyContent:"center"}} onClick={onClose}>
-      <div style={{background:T.surface,border:`0.5px solid ${T.borderMd}`,borderRadius:18,padding:28,width:480,maxWidth:"92vw"}} onClick={e=>e.stopPropagation()}>
-        <div style={{fontSize:10,fontFamily:"monospace",color:T.tx3,letterSpacing:"0.18em",textTransform:"uppercase",marginBottom:20,fontWeight:600}}>Log Proposal</div>
-        {[{label:"Company *",key:"company",ph:"Company name"},{label:"Job Title",key:"jobTitle",ph:"Role title"}].map(f=>(
-          <div key={f.key} style={{marginBottom:14}}>
-            <label style={lbl}>{f.label}</label>
-            <input value={data[f.key]} onChange={e=>set(f.key,e.target.value)} placeholder={f.ph} style={inp}/>
-          </div>
-        ))}
+    <div
+      draggable
+      onDragStart={e=>{e.dataTransfer.setData("dealId",deal.id);e.currentTarget.style.opacity="0.3";}}
+      onDragEnd={e=>{e.currentTarget.style.opacity="1";}}
+      onClick={onClick}
+      style={{background:T.card,borderRadius:10,border:`0.5px solid ${T.border}`,borderLeft:`3px solid ${priColor}`,marginBottom:8,padding:"12px 13px",cursor:"pointer"}}
+    >
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8,marginBottom:5}}>
+        <div style={{fontSize:13,fontWeight:700,color:T.tx,lineHeight:1.3}}>{deal.name}</div>
+        {deal.isStalled&&<span style={{fontSize:8,fontFamily:"monospace",background:T.uOv+"22",color:T.uOv,padding:"2px 6px",borderRadius:20,fontWeight:700,flexShrink:0}}>STALLED</span>}
+      </div>
+      {deal.value>0&&<div style={{fontSize:15,fontWeight:800,color:stage.c,fontFamily:"monospace",marginBottom:4}}>${deal.value.toLocaleString()}<span style={{fontSize:10,color:T.tx3}}>/mo</span></div>}
+      {deal.contact&&<div style={{fontSize:11,color:T.tx2,marginBottom:4}}>{deal.contact}</div>}
+      {deal.nextStep&&<div style={{fontSize:10,color:T.tx3,fontFamily:"monospace",lineHeight:1.4,marginBottom:6}}>→ {deal.nextStep}</div>}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:2}}>
+        <span style={{fontSize:9,fontFamily:"monospace",background:T.surface,color:T.tx3,padding:"2px 7px",borderRadius:20}}>{deal.owner}</span>
+        {linked.length>0&&<span style={{fontSize:9,fontFamily:"monospace",color:overdue.length>0?T.uOv:T.tx3}}>{overdue.length>0?"⚠ ":""}{linked.length} task{linked.length!==1?"s":""}</span>}
+      </div>
+    </div>
+  );
+}
+
+function AddDealModal({ onClose, onAdd }) {
+  const T = useT();
+  const ref = useRef(null);
+  const [form, setForm] = useState({name:"",contact:"",value:"",stage:"pending",priority:"medium",owner:"Garrett",nextStep:"",notes:""});
+  useEffect(()=>{ setTimeout(()=>ref.current?.focus(),60); },[]);
+  const set = (k,v) => setForm(p=>({...p,[k]:v}));
+  const handle = () => {
+    if(!form.name.trim()) return;
+    onAdd({id:uid(),name:form.name.trim(),contact:form.contact.trim()||null,value:parseFloat(form.value)||0,stage:form.stage,priority:form.priority,owner:form.owner||"Garrett",nextStep:form.nextStep.trim()||null,notes:form.notes.trim()||null,isStalled:false,createdAt:new Date().toISOString(),closedAt:null});
+    onClose();
+  };
+  const inp = {width:"100%",background:T.raised,border:`0.5px solid ${T.borderMd}`,borderRadius:8,padding:"9px 12px",color:T.tx,fontFamily:"monospace",fontSize:12,outline:"none"};
+  const lbl = {fontSize:9,fontFamily:"monospace",color:T.tx3,letterSpacing:"0.12em",textTransform:"uppercase",marginBottom:5,fontWeight:700,display:"block"};
+  return (
+    <div style={{position:"fixed",inset:0,background:T.overlay,zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center"}} onClick={onClose}>
+      <div style={{background:T.surface,border:`0.5px solid ${T.borderMd}`,borderRadius:18,padding:28,width:520,maxWidth:"92vw",maxHeight:"90vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+        <div style={{fontSize:10,fontFamily:"monospace",color:T.tx3,letterSpacing:"0.18em",textTransform:"uppercase",marginBottom:20,fontWeight:600}}>New Deal</div>
         <div style={{marginBottom:14}}>
-          <label style={lbl}>Cover letter (optional)</label>
-          <textarea value={data.coverLetter} onChange={e=>set("coverLetter",e.target.value)} rows={4} placeholder="Paste the cover letter you sent…" style={{...inp,resize:"none"}}/>
+          <label style={lbl}>Company / Deal Name *</label>
+          <input ref={ref} value={form.name} onChange={e=>set("name",e.target.value)} onKeyDown={e=>{if(e.key==="Escape")onClose();if(e.key==="Enter"){e.preventDefault();handle();}}} placeholder="Acme Co." style={inp}/>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+          <div><label style={lbl}>Contact</label><input value={form.contact} onChange={e=>set("contact",e.target.value)} placeholder="Jane Smith" style={inp}/></div>
+          <div><label style={lbl}>Monthly Value ($)</label><input type="number" value={form.value} onChange={e=>set("value",e.target.value)} placeholder="3500" style={inp}/></div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:14}}>
+          <div>
+            <label style={lbl}>Stage</label>
+            <select value={form.stage} onChange={e=>set("stage",e.target.value)} style={{...inp,cursor:"pointer"}}>
+              {STAGES.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={lbl}>Priority</label>
+            <select value={form.priority} onChange={e=>set("priority",e.target.value)} style={{...inp,cursor:"pointer"}}>
+              <option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option>
+            </select>
+          </div>
+          <div>
+            <label style={lbl}>Owner</label>
+            <select value={form.owner} onChange={e=>set("owner",e.target.value)} style={{...inp,cursor:"pointer"}}>
+              <option value="Garrett">Garrett</option><option value="Jeremy">Jeremy</option>
+            </select>
+          </div>
+        </div>
+        <div style={{marginBottom:14}}>
+          <label style={lbl}>Next Step</label>
+          <input value={form.nextStep} onChange={e=>set("nextStep",e.target.value)} placeholder="Send proposal, book call…" style={inp}/>
         </div>
         <div style={{marginBottom:22}}>
-          <label style={lbl}>Notes (optional)</label>
-          <textarea value={data.notes} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="Any context…" style={{...inp,resize:"none"}}/>
+          <label style={lbl}>Notes</label>
+          <textarea value={form.notes} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="Context, background…" style={{...inp,resize:"none"}}/>
         </div>
-        <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
-          <button type="button" onClick={onClose} style={{fontSize:12,padding:"10px 20px",borderRadius:9,border:`0.5px solid ${T.border}`,background:"transparent",color:T.tx2,cursor:"pointer",fontFamily:"monospace"}}>Cancel</button>
-          <button type="button" onClick={confirm} disabled={!data.company.trim()} style={{fontSize:12,padding:"10px 22px",borderRadius:9,background:data.company.trim()?T.sDone:T.raised,color:data.company.trim()?"#fff":T.tx3,border:"none",cursor:"pointer",fontFamily:"monospace",fontWeight:700}}>Add to Tracker →</button>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <span style={{fontSize:11,color:T.tx3,fontFamily:"monospace"}}>Enter to save · Esc to close</span>
+          <button type="button" onClick={handle} disabled={!form.name.trim()} style={{background:form.name.trim()?T.addBtn:T.raised,color:form.name.trim()?"#FFF":T.tx3,border:"none",borderRadius:11,padding:"12px 26px",fontFamily:"monospace",fontSize:13,fontWeight:700,cursor:"pointer",transition:"all 0.15s"}}>Add Deal →</button>
         </div>
       </div>
     </div>
   );
 }
 
-// ── Proposal Tracker ───────────────────────────────────────────────────────
-function ProposalTracker({ proposals, onUpdate, onDelete }) {
+function DealModal({ deal, tasks, onClose, onUpdate, onDelete, onUpdateTask, onAddTask }) {
   const T = useT();
-  const [filter,   setFilter]   = useState("all");
-  const [expanded, setExpanded] = useState(null);
+  const stage = STAGES.find(s=>s.key===deal.stage)||STAGES[0];
+  const linked = tasks.filter(t=>t.dealId===deal.id);
+  const unlinked = tasks.filter(t=>!t.dealId&&t.status!=="done");
+  const [newAction, setNewAction] = useState("");
+  const [newDate,   setNewDate]   = useState("");
+  const [linkId,    setLinkId]    = useState("");
+  const inp = {width:"100%",background:T.raised,border:`0.5px solid ${T.borderMd}`,borderRadius:8,padding:"8px 11px",color:T.tx,fontFamily:"monospace",fontSize:12,outline:"none"};
+  const lbl = {fontSize:9,fontFamily:"monospace",color:T.tx3,letterSpacing:"0.12em",textTransform:"uppercase",marginBottom:5,fontWeight:700,display:"block"};
+  const addTask = () => {
+    if(!newAction.trim()) return;
+    onAddTask({id:uid(),company:deal.name,contact:deal.contact||null,title:null,action:newAction.trim(),notes:null,followUpDate:newDate||null,priority:deal.priority,category:"deals",recurrence:null,subtasks:[],status:"not_started",dealId:deal.id,createdAt:new Date().toISOString()});
+    setNewAction(""); setNewDate("");
+  };
+  const linkTask = () => { if(!linkId) return; onUpdateTask(linkId,{dealId:deal.id}); setLinkId(""); };
+  return (
+    <div style={{position:"fixed",inset:0,background:T.overlay,zIndex:1000,display:"flex",alignItems:"flex-start",justifyContent:"center",paddingTop:40,paddingBottom:40,overflowY:"auto"}} onClick={onClose}>
+      <div style={{background:T.surface,border:`0.5px solid ${T.borderMd}`,borderRadius:20,width:620,maxWidth:"92vw",overflow:"hidden"}} onClick={e=>e.stopPropagation()}>
+        {/* Header */}
+        <div style={{background:`${stage.c}18`,borderBottom:`0.5px solid ${T.border}`,padding:"20px 24px",display:"flex",alignItems:"flex-start",gap:14}}>
+          <div style={{flex:1}}>
+            <div style={{fontSize:10,fontFamily:"monospace",color:stage.c,letterSpacing:"0.14em",textTransform:"uppercase",marginBottom:4,fontWeight:700}}>Deal</div>
+            <div style={{fontSize:22,fontWeight:800,color:T.tx,letterSpacing:"-0.02em",marginBottom:10}}>
+              <Editable value={deal.name} onChange={v=>onUpdate({name:v||deal.name})}/>
+            </div>
+            <select value={deal.stage} onChange={e=>{const closed=STAGES.find(s=>s.key===e.target.value)?.closed;onUpdate({stage:e.target.value,closedAt:closed?new Date().toISOString():null});}} style={{fontSize:11,fontFamily:"monospace",background:T.raised,border:`0.5px solid ${stage.c}`,borderRadius:20,color:stage.c,padding:"4px 11px",cursor:"pointer",fontWeight:600,outline:"none"}}>
+              {STAGES.map(s=><option key={s.key} value={s.key} style={{color:T.tx}}>{s.label}</option>)}
+            </select>
+          </div>
+          <button onClick={onClose} style={{background:"none",border:"none",color:T.tx3,cursor:"pointer",fontSize:22,padding:4,lineHeight:1}}>×</button>
+        </div>
+        {/* Body */}
+        <div style={{padding:"22px 24px",overflowY:"auto",maxHeight:"60vh"}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"10px 16px",marginBottom:18,background:T.card,borderRadius:11,padding:"14px 16px"}}>
+            <div>
+              <label style={lbl}>Monthly Value</label>
+              <div style={{fontSize:20,fontWeight:800,color:stage.c,fontFamily:"monospace",display:"flex",alignItems:"baseline",gap:1}}>
+                <span>$</span><Editable value={deal.value?String(deal.value):""} onChange={v=>onUpdate({value:parseFloat(v)||0})} placeholder="0"/><span style={{fontSize:10,color:T.tx3}}>/mo</span>
+              </div>
+            </div>
+            <div>
+              <label style={lbl}>Contact</label>
+              <div style={{fontSize:13,color:T.tx}}><Editable value={deal.contact} onChange={v=>onUpdate({contact:v})} placeholder="Add contact"/></div>
+            </div>
+            <div>
+              <label style={lbl}>Owner</label>
+              <select value={deal.owner} onChange={e=>onUpdate({owner:e.target.value})} style={{fontSize:12,fontFamily:"monospace",background:T.raised,border:`0.5px solid ${T.border}`,borderRadius:7,color:T.tx,padding:"4px 8px",cursor:"pointer",outline:"none"}}>
+                <option value="Garrett">Garrett</option><option value="Jeremy">Jeremy</option>
+              </select>
+            </div>
+            <div>
+              <label style={lbl}>Priority</label>
+              <select value={deal.priority} onChange={e=>onUpdate({priority:e.target.value})} style={{fontSize:12,fontFamily:"monospace",background:T.raised,border:`0.5px solid ${T.border}`,borderRadius:7,color:T.tx,padding:"4px 8px",cursor:"pointer",outline:"none"}}>
+                <option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option>
+              </select>
+            </div>
+            <div style={{gridColumn:"1/-1"}}>
+              <label style={lbl}>Next Step</label>
+              <div style={{fontSize:12,color:T.tx2,fontFamily:"monospace"}}><Editable value={deal.nextStep} onChange={v=>onUpdate({nextStep:v})} placeholder="What's the next action?"/></div>
+            </div>
+            <div style={{gridColumn:"1/-1"}}>
+              <label style={lbl}>Notes</label>
+              <div style={{fontSize:12,color:T.tx2,lineHeight:1.6}}><Editable value={deal.notes} onChange={v=>onUpdate({notes:v})} placeholder="Context, background…" multi/></div>
+            </div>
+          </div>
+          {/* Stalled toggle */}
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:18,padding:"10px 14px",background:deal.isStalled?`${T.uOv}18`:T.card,borderRadius:9,border:`0.5px solid ${deal.isStalled?T.uOv+"60":T.border}`}}>
+            <input type="checkbox" id={`stalled-${deal.id}`} checked={!!deal.isStalled} onChange={e=>onUpdate({isStalled:e.target.checked})} style={{cursor:"pointer",accentColor:T.uOv}}/>
+            <label htmlFor={`stalled-${deal.id}`} style={{fontSize:12,color:deal.isStalled?T.uOv:T.tx2,cursor:"pointer",fontFamily:"monospace",fontWeight:deal.isStalled?700:400}}>Deal is stalled</label>
+          </div>
+          {/* Linked tasks */}
+          <div>
+            <div style={{fontSize:9,fontFamily:"monospace",color:T.tx3,letterSpacing:"0.14em",textTransform:"uppercase",marginBottom:11,fontWeight:700}}>Linked Tasks ({linked.length})</div>
+            {linked.length===0&&<div style={{fontSize:11,color:T.tx3,fontFamily:"monospace",marginBottom:10}}>No tasks linked yet.</div>}
+            {linked.map(t=>{
+              const urg=getUrgency(t), urgColor={overdue:T.uOv,today:T.uTd,week:T.uWk,none:T.tx3}[urg];
+              const sc={not_started:T.sNs,in_progress:T.sIp,done:T.sDone}[t.status||"not_started"];
+              return (
+                <div key={t.id} style={{display:"flex",alignItems:"center",gap:9,padding:"8px 11px",marginBottom:5,background:T.card,borderRadius:8,border:`0.5px solid ${T.border}`}}>
+                  <div style={{width:6,height:6,borderRadius:"50%",background:sc,flexShrink:0}}/>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:12,color:T.tx,fontFamily:"monospace",fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>→ {t.action}</div>
+                    {t.followUpDate&&<div style={{fontSize:10,color:urg!=="none"?urgColor:T.tx3,fontFamily:"monospace"}}>{fmtDate(t.followUpDate)}</div>}
+                  </div>
+                  <span style={{fontSize:9,color:sc,fontFamily:"monospace",fontWeight:600,flexShrink:0}}>{STATUS_CFG[t.status||"not_started"].label}</span>
+                  <button onClick={()=>onUpdateTask(t.id,{dealId:null})} title="Unlink" style={{background:"none",border:"none",color:T.tx3,cursor:"pointer",fontSize:16,padding:0,lineHeight:1,flexShrink:0}}>×</button>
+                </div>
+              );
+            })}
+            {/* Inline new task */}
+            <div style={{display:"flex",gap:7,marginTop:10,marginBottom:8}}>
+              <input value={newAction} onChange={e=>setNewAction(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")addTask();e.stopPropagation();}} placeholder="New task: action…" style={{flex:1,fontSize:12,padding:"7px 11px",borderRadius:8,border:`0.5px solid ${T.border}`,background:T.raised,color:T.tx,fontFamily:"monospace",outline:"none"}}/>
+              <input type="date" value={newDate} onChange={e=>setNewDate(e.target.value)} style={{fontSize:11,padding:"7px 9px",borderRadius:8,border:`0.5px solid ${T.border}`,background:T.raised,color:T.tx,fontFamily:"monospace",outline:"none",colorScheme:T.isDark?"dark":"light"}}/>
+              <button onClick={addTask} disabled={!newAction.trim()} style={{fontSize:11,padding:"6px 13px",borderRadius:20,border:`1px solid ${T.cDeals}`,background:"transparent",color:T.cDeals,cursor:"pointer",fontFamily:"monospace",fontWeight:500,flexShrink:0}}>+ Task</button>
+            </div>
+            {/* Link existing */}
+            {unlinked.length>0&&(
+              <div style={{display:"flex",gap:7,alignItems:"center"}}>
+                <select value={linkId} onChange={e=>setLinkId(e.target.value)} style={{flex:1,fontSize:11,padding:"6px 10px",borderRadius:8,border:`0.5px solid ${T.border}`,background:T.raised,color:linkId?T.tx:T.tx3,fontFamily:"monospace",outline:"none",cursor:"pointer"}}>
+                  <option value="">Link existing task…</option>
+                  {unlinked.map(t=><option key={t.id} value={t.id}>{t.company?`${t.company}: `:""}{t.action}</option>)}
+                </select>
+                <button onClick={linkTask} disabled={!linkId} style={{fontSize:11,padding:"6px 13px",borderRadius:20,border:`1px solid ${T.cPart}`,background:"transparent",color:T.cPart,cursor:"pointer",fontFamily:"monospace",fontWeight:500,flexShrink:0}}>Link</button>
+              </div>
+            )}
+          </div>
+        </div>
+        {/* Footer */}
+        <div style={{borderTop:`0.5px solid ${T.border}`,padding:"14px 24px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{fontSize:10,fontFamily:"monospace",color:T.tx3}}>Created {fmtFull(deal.createdAt)}{deal.closedAt?` · Closed ${fmtFull(deal.closedAt)}`:""}</div>
+          <button onClick={()=>{onDelete();onClose();}} style={{fontSize:11,padding:"7px 16px",borderRadius:9,border:`0.5px solid ${T.uOv}55`,background:"transparent",color:T.uOv,cursor:"pointer",fontFamily:"monospace"}}>× Delete deal</button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
-  const weekStart = getWeekStart();
-  const total     = proposals.length;
-  const thisWeek  = proposals.filter(p=>new Date(p.appliedAt)>=weekStart).length;
-  const won       = proposals.filter(p=>p.status==="converted").length;
-  const active    = proposals.filter(p=>p.status==="sent").length;
-  const winRate   = total>0?Math.round(won/total*100):0;
+function DealKanban({ deals, tasks, onMoveDeal, onUpdate, onDelete, onUpdateTask, onAddTask }) {
+  const T = useT();
+  const [dragOver, setDragOver] = useState(null);
+  const [openDeal, setOpenDeal] = useState(null);
+  const handleDrop = (stageKey, e) => { const id=e.dataTransfer.getData("dealId"); if(id) onMoveDeal(id,stageKey); setDragOver(null); };
+  const modalDeal = openDeal ? deals.find(d=>d.id===openDeal) : null;
+  return (
+    <>
+      <div style={{overflowX:"auto",paddingBottom:16}}>
+        <div style={{display:"flex",gap:10,minWidth:"max-content",alignItems:"flex-start"}}>
+          {STAGES.map(stage=>{
+            const col = deals.filter(d=>d.stage===stage.key);
+            const total = col.reduce((a,d)=>a+(d.value||0),0);
+            const isOver = dragOver===stage.key;
+            return (
+              <div key={stage.key}
+                onDragOver={e=>{e.preventDefault();setDragOver(stage.key);}}
+                onDragLeave={e=>{if(!e.relatedTarget||!e.currentTarget.contains(e.relatedTarget))setDragOver(null);}}
+                onDrop={e=>{e.preventDefault();handleDrop(stage.key,e);}}
+                style={{width:220,flexShrink:0,background:isOver?`${stage.c}14`:T.surface,border:`0.5px solid ${isOver?stage.c:T.border}`,borderRadius:13,display:"flex",flexDirection:"column",overflow:"hidden",transition:"all 0.18s"}}
+              >
+                <div style={{padding:"12px 13px 10px",borderBottom:`0.5px solid ${T.border}`,flexShrink:0}}>
+                  <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:3}}>
+                    <div style={{width:8,height:8,borderRadius:"50%",background:stage.c,flexShrink:0}}/>
+                    <span style={{fontSize:12,fontWeight:700,color:T.tx,flex:1,lineHeight:1.3}}>{stage.label}</span>
+                    <span style={{fontSize:10,color:T.tx3,fontFamily:"monospace"}}>{col.length}</span>
+                  </div>
+                  {total>0&&<div style={{fontSize:10,color:stage.c,fontFamily:"monospace",fontWeight:600}}>${total.toLocaleString()}/mo</div>}
+                </div>
+                <div style={{padding:"8px 8px",overflowY:"auto",flex:1,maxHeight:480}}>
+                  {col.length===0&&<div style={{textAlign:"center",padding:"24px 8px",color:T.tx3,fontSize:11,border:`0.5px dashed ${T.border}`,borderRadius:8,marginTop:4,fontFamily:"monospace"}}>Drop here</div>}
+                  {col.map(d=><DealCard key={d.id} deal={d} tasks={tasks} onClick={()=>setOpenDeal(d.id)}/>)}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      {modalDeal&&<DealModal deal={modalDeal} tasks={tasks} onClose={()=>setOpenDeal(null)} onUpdate={p=>onUpdate(modalDeal.id,p)} onDelete={()=>onDelete(modalDeal.id)} onUpdateTask={onUpdateTask} onAddTask={onAddTask}/>}
+    </>
+  );
+}
 
-  const filtered = filter==="all"?proposals:proposals.filter(p=>p.status===filter);
-  const STATUS_STYLE = {sent:{label:"Sent",c:T.cDeals},converted:{label:"Won",c:T.sDone},no_response:{label:"No response",c:T.tx3},rejected:{label:"Rejected",c:T.uOv}};
-  const filterTabs = ["all","sent","converted","no_response","rejected"];
-  const filterLabels = {all:"All",sent:"Sent",converted:"Won",no_response:"No response",rejected:"Rejected"};
+function DealsPage({ deals, tasks, onAdd, onUpdate, onDelete, onUpdateTask, onAddTask }) {
+  const T = useT();
+  const [addOpen,     setAddOpen]     = useState(false);
+  const [ownerFilter, setOwnerFilter] = useState("all");
+  const [stageFilter, setStageFilter] = useState("open");
+  const [stalledOnly, setStalledOnly] = useState(false);
+
+  const openDeals    = deals.filter(d=>!STAGES.find(s=>s.key===d.stage)?.closed);
+  const totalVal     = openDeals.reduce((a,d)=>a+(d.value||0),0);
+  const stalledCount = openDeals.filter(d=>d.isStalled).length;
+  const now          = new Date();
+  const wonMonth     = deals.filter(d=>d.stage==="won"&&d.closedAt&&new Date(d.closedAt).getMonth()===now.getMonth()&&new Date(d.closedAt).getFullYear()===now.getFullYear()).length;
+
+  const moveDeal = (id,stage) => { const closed=STAGES.find(s=>s.key===stage)?.closed; onUpdate(id,{stage,closedAt:closed?new Date().toISOString():null}); };
+
+  let filtered = [...deals];
+  if(ownerFilter!=="all")   filtered = filtered.filter(d=>d.owner===ownerFilter);
+  if(stalledOnly)            filtered = filtered.filter(d=>d.isStalled);
+  if(stageFilter==="open")   filtered = filtered.filter(d=>!STAGES.find(s=>s.key===d.stage)?.closed);
+  else if(stageFilter==="closed") filtered = filtered.filter(d=>STAGES.find(s=>s.key===d.stage)?.closed);
+
+  const chip = (active,c=T.cDeals) => ({fontSize:11,padding:"5px 13px",borderRadius:20,border:`0.5px solid ${active?c:T.border}`,background:active?`${c}18`:"transparent",color:active?c:T.tx3,cursor:"pointer",fontFamily:"monospace",fontWeight:active?600:400,transition:"all 0.14s"});
+  const div  = {width:1,height:20,background:T.border,margin:"0 4px"};
 
   return (
     <div>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:22}}>
-        {[{label:"Total Applied",val:total,c:T.cPart},{label:"This Week",val:thisWeek,c:T.cDeals},{label:"Win Rate",val:`${winRate}%`,c:T.sDone},{label:"Active",val:active,c:T.cOps}].map(m=>(
-          <div key={m.label} style={{background:T.card,border:`0.5px solid ${T.border}`,borderRadius:11,padding:"14px 14px"}}>
+      {/* Stats */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:20}}>
+        {[
+          {label:"Pipeline Value", val:`$${totalVal.toLocaleString()}/mo`, c:T.cDeals},
+          {label:"Open Deals",     val:openDeals.length,                   c:T.cPart},
+          {label:"Stalled",        val:stalledCount,                       c:stalledCount>0?T.uOv:T.tx3},
+          {label:"Won This Month", val:wonMonth,                           c:T.sDone},
+        ].map(m=>(
+          <div key={m.label} style={{background:T.card,border:`0.5px solid ${T.border}`,borderRadius:11,padding:"14px 16px"}}>
             <div style={{fontSize:9,fontFamily:"monospace",color:T.tx3,letterSpacing:"0.12em",textTransform:"uppercase",marginBottom:6,fontWeight:600}}>{m.label}</div>
-            <div style={{fontSize:26,fontWeight:800,color:m.c,letterSpacing:"-0.03em",fontFamily:"monospace"}}>{m.val}</div>
+            <div style={{fontSize:22,fontWeight:800,color:m.c,letterSpacing:"-0.03em",fontFamily:"monospace"}}>{m.val}</div>
           </div>
         ))}
       </div>
-
-      <div style={{display:"flex",borderBottom:`0.5px solid ${T.border}`,marginBottom:16,overflowX:"auto"}}>
-        {filterTabs.map(k=>{ const isA=filter===k, c=k==="converted"?T.sDone:k==="rejected"?T.uOv:k==="sent"?T.cDeals:T.tx, cnt=k==="all"?proposals.length:proposals.filter(p=>p.status===k).length; return (
-          <button key={k} onClick={()=>setFilter(k)} style={{padding:"8px 14px",fontSize:11,fontWeight:isA?600:400,color:isA?c:T.tx3,background:"none",border:"none",borderBottom:`2px solid ${isA?c:"transparent"}`,marginBottom:-1,cursor:"pointer",fontFamily:"monospace",transition:"all 0.14s",whiteSpace:"nowrap"}}>
-            {filterLabels[k]}{cnt>0&&<span style={{marginLeft:5,fontSize:9,background:isA?c:T.raised,color:isA?(T.isDark?"#000":"#fff"):T.tx3,padding:"1px 5px",borderRadius:20,fontWeight:700}}>{cnt}</span>}
-          </button>
-        ); })}
+      {/* Filters */}
+      <div style={{display:"flex",gap:7,marginBottom:18,flexWrap:"wrap",alignItems:"center"}}>
+        <button onClick={()=>setOwnerFilter("all")}     style={chip(ownerFilter==="all")}>All owners</button>
+        <button onClick={()=>setOwnerFilter("Garrett")} style={chip(ownerFilter==="Garrett")}>Garrett</button>
+        <button onClick={()=>setOwnerFilter("Jeremy")}  style={chip(ownerFilter==="Jeremy")}>Jeremy</button>
+        <div style={div}/>
+        <button onClick={()=>setStageFilter("open")}   style={chip(stageFilter==="open")}>Open</button>
+        <button onClick={()=>setStageFilter("closed")} style={chip(stageFilter==="closed")}>Closed</button>
+        <button onClick={()=>setStageFilter("all")}    style={chip(stageFilter==="all")}>All stages</button>
+        <div style={div}/>
+        <button onClick={()=>setStalledOnly(p=>!p)} style={chip(stalledOnly,T.uOv)}>Stalled only</button>
       </div>
-
-      {filtered.length===0 && (
-        <div style={{textAlign:"center",padding:"40px 20px",color:T.tx3,fontSize:12,border:`0.5px dashed ${T.border}`,borderRadius:11}}>
-          {total===0?"No proposals yet — generate your first one on the left.":"No proposals with this status."}
-        </div>
-      )}
-
-      {filtered.map(p=>{ const ss=STATUS_STYLE[p.status]||STATUS_STYLE.sent, isExp=expanded===p.id; return (
-        <div key={p.id} style={{background:T.card,border:`0.5px solid ${T.border}`,borderLeft:`3px solid ${ss.c}`,borderRadius:10,marginBottom:8,overflow:"hidden"}}>
-          <div onClick={()=>setExpanded(e=>e===p.id?null:p.id)} style={{padding:"12px 14px",cursor:"pointer",display:"flex",alignItems:"center",gap:12}}>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{display:"flex",gap:8,alignItems:"baseline",marginBottom:3}}>
-                <span style={{fontSize:13,fontWeight:600,color:T.tx}}>{p.company}</span>
-                <span style={{fontSize:11,color:T.tx2,fontFamily:"monospace"}}>· {p.jobTitle}</span>
-              </div>
-              <div style={{display:"flex",gap:10,alignItems:"center"}}>
-                <span style={{fontSize:10,color:T.tx3,fontFamily:"monospace"}}>{fmtFull(p.appliedAt)}</span>
-                {p.variantLabel&&<span style={{fontSize:9,color:T.tx3,fontFamily:"monospace",opacity:0.7}}>{p.variantLabel} variant</span>}
-              </div>
-            </div>
-            <div style={{display:"flex",gap:8,alignItems:"center",flexShrink:0}}>
-              <span style={{fontSize:11,fontFamily:"monospace",fontWeight:600,color:ss.c}}>{ss.label}</span>
-              {p.status==="sent"&&<button onClick={e=>{e.stopPropagation();onUpdate(p.id,{status:"converted",convertedAt:new Date().toISOString()});}} style={{fontSize:10,padding:"4px 12px",borderRadius:20,background:T.isDark?"rgba(63,217,160,0.15)":"rgba(22,128,96,0.10)",border:`1px solid ${T.sDone}`,color:T.sDone,cursor:"pointer",fontFamily:"monospace",fontWeight:600,whiteSpace:"nowrap"}}>Mark Won</button>}
-              {p.status==="sent"&&<button onClick={e=>{e.stopPropagation();onUpdate(p.id,{status:"no_response"});}} style={{fontSize:10,padding:"4px 10px",borderRadius:20,background:"transparent",border:`0.5px solid ${T.border}`,color:T.tx3,cursor:"pointer",fontFamily:"monospace"}}>No reply</button>}
-              <button onClick={e=>{e.stopPropagation();onDelete(p.id);}} style={{background:"none",border:"none",color:T.tx3,cursor:"pointer",fontSize:14,padding:0,lineHeight:1}}>×</button>
-            </div>
-          </div>
-          {isExp && (
-            <div style={{borderTop:`0.5px solid ${T.border}`,padding:"14px 14px"}}>
-              {p.notes&&<div style={{fontSize:12,color:T.tx2,marginBottom:12,fontStyle:"italic"}}>{p.notes}</div>}
-              <div style={{fontSize:9,fontFamily:"monospace",color:T.tx3,letterSpacing:"0.12em",textTransform:"uppercase",marginBottom:8,fontWeight:600}}>Cover letter sent</div>
-              <div style={{fontSize:12,color:T.tx,lineHeight:1.8,whiteSpace:"pre-wrap",background:T.surface,borderRadius:8,padding:"12px 14px",marginBottom:12}}>{p.proposalText}</div>
-              {p.status==="sent" && (
-                <div style={{display:"flex",gap:8}}>
-                  <button onClick={()=>onUpdate(p.id,{status:"converted",convertedAt:new Date().toISOString()})} style={{fontSize:11,padding:"8px 18px",borderRadius:9,background:T.sDone,color:"#fff",border:"none",cursor:"pointer",fontFamily:"monospace",fontWeight:700}}>Won this job</button>
-                  <button onClick={()=>onUpdate(p.id,{status:"rejected"})} style={{fontSize:11,padding:"8px 14px",borderRadius:9,border:`0.5px solid ${T.border}`,background:"transparent",color:T.tx3,cursor:"pointer",fontFamily:"monospace"}}>Rejected</button>
-                </div>
-              )}
-              {p.status==="converted"&&p.convertedAt&&<div style={{fontSize:11,color:T.sDone,fontFamily:"monospace",fontWeight:600}}>Won on {fmtFull(p.convertedAt)}</div>}
-            </div>
-          )}
-        </div>
-      ); })}
-    </div>
-  );
-}
-
-// ── ProposalsPage ──────────────────────────────────────────────────────────
-function ProposalsPage({ proposals, onAdd, onUpdate, onDelete }) {
-  const T = useT();
-  const [addOpen, setAddOpen] = useState(false);
-  return (
-    <div>
-      <div style={{display:"flex",justifyContent:"flex-end",marginBottom:20}}>
-        <button type="button" onClick={()=>setAddOpen(true)} style={{fontSize:12,padding:"10px 20px",borderRadius:10,background:T.addBtn,color:"#FFF",border:"none",fontFamily:"monospace",fontWeight:700,cursor:"pointer"}}>+ Log Proposal</button>
-      </div>
-      <ProposalTracker proposals={proposals} onUpdate={onUpdate} onDelete={onDelete}/>
-      {addOpen && <ProposalLogModal onConfirm={p=>{onAdd(p);setAddOpen(false);}} onClose={()=>setAddOpen(false)}/>}
+      <DealKanban deals={filtered} tasks={tasks} onMoveDeal={moveDeal} onUpdate={onUpdate} onDelete={onDelete} onUpdateTask={onUpdateTask} onAddTask={onAddTask}/>
+      <button type="button" onClick={()=>setAddOpen(true)} style={{position:"fixed",bottom:30,right:30,width:54,height:54,borderRadius:"50%",background:T.addBtn,color:"#FFF",border:"none",fontSize:26,fontWeight:300,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:`0 8px 28px ${T.addBtn}80`,transition:"all 0.2s",zIndex:500,lineHeight:1}}>+</button>
+      {addOpen&&<AddDealModal onClose={()=>setAddOpen(false)} onAdd={d=>{onAdd(d);setAddOpen(false);}}/>}
     </div>
   );
 }
 
 // ── Root App ───────────────────────────────────────────────────────────────
 function App() {
-  const [isDark,    setIsDark]    = useState(true);
-  const [page,      setPage]      = useState("tasks");
+  const [isDark, setIsDark] = useState(true);
+  const [page,   setPage]   = useState("tasks");
   const [tasks, setTasks] = useState(()=>{
     try { const saved=lsGet(TASKS_KEY); if(saved?.length) return saved.map(t=>({...t,status:t.status||(t.completed?"done":"not_started")})); } catch{}
     return SEED_TASKS;
   });
-  const [proposals, setProposals] = useState(()=>{
-    try { const saved=lsGet(PROPOSALS_KEY); if(saved) return saved; } catch{}
-    return [];
+  const [deals, setDeals] = useState(()=>{
+    try { const saved=lsGet(DEALS_KEY); if(saved?.length) return saved; } catch{}
+    return SEED_DEALS;
   });
   const [toast, setToast] = useState(null);
 
   const T = isDark ? DARK : LIGHT;
 
   useEffect(()=>{ lsSet(TASKS_KEY, tasks); },[tasks]);
-  useEffect(()=>{ lsSet(PROPOSALS_KEY, proposals); },[proposals]);
+  useEffect(()=>{ lsSet(DEALS_KEY, deals);  },[deals]);
 
   const showToast = (msg, type="ok") => { setToast({msg,type}); setTimeout(()=>setToast(null),3000); };
 
-  const addTask       = t        => { setTasks(p=>[t,...p]); showToast(`Logged → ${getCat(T,t.category).label}`); };
-  const updateTask    = (id,p)   => setTasks(prev=>prev.map(t=>t.id===id?{...t,...p}:t));
-  const statusChange  = (id,s)   => setTasks(prev=>prev.map(t=>t.id===id?{...t,status:s}:t));
-  const deleteTask    = id       => setTasks(prev=>prev.filter(t=>t.id!==id));
-  const addProposal   = p        => { setProposals(prev=>[p,...prev]); showToast(`Added → ${p.company}`); };
-  const updateProp    = (id,p)   => setProposals(prev=>prev.map(x=>x.id===id?{...x,...p}:x));
-  const deleteProp    = id       => setProposals(prev=>prev.filter(x=>x.id!==id));
+  const addTask      = t      => { setTasks(p=>[t,...p]); showToast(`Logged → ${getCat(T,t.category).label}`); };
+  const updateTask   = (id,p) => setTasks(prev=>prev.map(t=>t.id===id?{...t,...p}:t));
+  const statusChange = (id,s) => setTasks(prev=>prev.map(t=>t.id===id?{...t,status:s}:t));
+  const deleteTask   = id     => setTasks(prev=>prev.filter(t=>t.id!==id));
 
-  const activeSent = proposals.filter(p=>p.status==="sent").length;
+  const addDeal    = d      => { setDeals(p=>[d,...p]); showToast(`Deal added → ${d.name}`); };
+  const updateDeal = (id,p) => setDeals(prev=>prev.map(d=>d.id===id?{...d,...p}:d));
+  const deleteDeal = id     => setDeals(prev=>prev.filter(d=>d.id!==id));
+
+  const openDeals = deals.filter(d=>!STAGES.find(s=>s.key===d.stage)?.closed).length;
 
   return (
     <ThemeCtx.Provider value={T}>
@@ -782,7 +978,7 @@ function App() {
           select option{background:${T.surface};color:${T.tx};}
         `}</style>
 
-        {toast && (
+        {toast&&(
           <div style={{position:"fixed",top:16,right:16,zIndex:2000,background:toast.type==="err"?(T.isDark?"#2E0808":"#FDF0F0"):(T.isDark?"#0A2A18":"#F0FDF6"),color:toast.type==="err"?T.uOv:T.sDone,padding:"9px 18px",borderRadius:9,fontSize:12,fontWeight:600,fontFamily:"monospace",border:`0.5px solid ${toast.type==="err"?T.uOv+"50":T.sDone+"50"}`}}>
             {toast.msg}
           </div>
@@ -795,10 +991,10 @@ function App() {
               <div style={{fontSize:9,fontFamily:"monospace",color:T.tx3,letterSpacing:"0.22em",textTransform:"uppercase",fontWeight:700,lineHeight:1}}>Insendra</div>
               <div style={{fontSize:14,fontWeight:800,color:T.tx,letterSpacing:"-0.02em",lineHeight:1.3}}>Sales Hub</div>
             </div>
-            {[{k:"tasks",l:"Tasks"},{k:"proposals",l:"Proposals"}].map(({k,l})=>{ const isA=page===k, accent=k==="proposals"?T.cPart:T.cDeals; return (
+            {[{k:"tasks",l:"Tasks",accent:T.cDeals},{k:"deals",l:"Deals",accent:T.cPart}].map(({k,l,accent})=>{ const isA=page===k; return (
               <button key={k} onClick={()=>setPage(k)} style={{padding:"0 18px",height:56,fontSize:13,fontWeight:isA?700:400,color:isA?accent:T.tx3,background:"none",border:"none",borderBottom:`2px solid ${isA?accent:"transparent"}`,cursor:"pointer",transition:"all 0.14s",display:"flex",alignItems:"center",gap:7}}>
                 {l}
-                {k==="proposals"&&activeSent>0&&<span style={{fontSize:9,background:T.cPart,color:"#fff",padding:"1px 6px",borderRadius:20,fontWeight:700}}>{activeSent}</span>}
+                {k==="deals"&&openDeals>0&&<span style={{fontSize:9,background:T.cPart,color:"#fff",padding:"1px 6px",borderRadius:20,fontWeight:700}}>{openDeals}</span>}
               </button>
             ); })}
             <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:14}}>
@@ -812,8 +1008,8 @@ function App() {
         </div>
 
         <div style={{padding:"28px 28px 60px"}}>
-          {page==="tasks"     && <TasksPage     tasks={tasks}     onUpdate={updateTask}  onStatusChange={statusChange} onDelete={deleteTask} onAdd={addTask}/>}
-          {page==="proposals" && <ProposalsPage proposals={proposals} onAdd={addProposal} onUpdate={updateProp} onDelete={deleteProp}/>}
+          {page==="tasks" && <TasksPage tasks={tasks} onUpdate={updateTask} onStatusChange={statusChange} onDelete={deleteTask} onAdd={addTask}/>}
+          {page==="deals" && <DealsPage deals={deals} tasks={tasks} onAdd={addDeal} onUpdate={updateDeal} onDelete={deleteDeal} onUpdateTask={updateTask} onAddTask={addTask}/>}
         </div>
       </div>
     </ThemeCtx.Provider>

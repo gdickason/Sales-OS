@@ -4,9 +4,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Insendra Sales Hub</title>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.26.4/babel.min.js"></script>
+  <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html, body, #root { height: 100%; }
@@ -26,7 +26,7 @@ const { useState, useEffect, useRef, createContext, useContext } = React;
 
 // ── Constants ──────────────────────────────────────────────────────────────
 const API           = "https://api.anthropic.com/v1/messages";
-const MODEL         = "claude-sonnet-4-20250514";
+const MODEL         = "claude-sonnet-4-6";
 const TASKS_KEY     = "insendra_v5";
 const PROPOSALS_KEY = "insendra_proposals_v1";
 const APIKEY_KEY    = "insendra_api_key";
@@ -78,7 +78,7 @@ const MONTHS = ["January","February","March","April","May","June","July","August
 const WDAYS  = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 
 // ── Utils ──────────────────────────────────────────────────────────────────
-function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2,5); }
+function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2,9); }
 function fmtDate(s) { if(!s) return ""; return new Date(s+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"}); }
 function fmtFull(s) { if(!s) return ""; return new Date(s).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}); }
 
@@ -141,8 +141,12 @@ async function callClaude(system, content, apiKey) {
 
 function extractJSON(text) {
   const s = text.replace(/```[\w]*\n?|```/g,"").trim();
-  const a = Math.min(...["{","["].map(c=>s.indexOf(c)).filter(i=>i>=0));
-  const b = Math.max(s.lastIndexOf("}"), s.lastIndexOf("]"));
+  const positions = ["{","["].map(c=>s.indexOf(c)).filter(i=>i>=0);
+  if(!positions.length) throw new Error("No JSON in response");
+  const a = Math.min(...positions);
+  const closer = s[a] === "{" ? "}" : "]";
+  const b = s.lastIndexOf(closer);
+  if(b < a) throw new Error("Malformed JSON in response");
   return JSON.parse(s.slice(a, b+1));
 }
 
@@ -306,6 +310,7 @@ function TaskCard({ task, onUpdate, onStatusChange, onDelete, apiKey }) {
   const [open,       setOpen]       = useState(false);
   const [suggesting, setSuggesting] = useState(false);
   const [sug,        setSug]        = useState(null);
+  const [sugError,   setSugError]   = useState(null);
   const [newSub,     setNewSub]     = useState("");
   const [snoozeOpen, setSnoozeOpen] = useState(false);
   const [blockMsg,   setBlockMsg]   = useState(null);
@@ -327,8 +332,8 @@ function TaskCard({ task, onUpdate, onStatusChange, onDelete, apiKey }) {
   };
 
   const handleSuggest = async e => {
-    e.stopPropagation(); setSuggesting(true); setSug(null);
-    try{ const s=await suggestSubtasks(task,apiKey); setSug(Array.isArray(s)?s:[]); } catch{}
+    e.stopPropagation(); setSuggesting(true); setSug(null); setSugError(null);
+    try{ const s=await suggestSubtasks(task,apiKey); setSug(Array.isArray(s)?s:[]); } catch{ setSugError("Couldn't suggest subtasks — try again"); }
     setSuggesting(false);
   };
 
@@ -435,7 +440,7 @@ function TaskCard({ task, onUpdate, onStatusChange, onDelete, apiKey }) {
                 <button onClick={()=>{patchSubs(p=>[...p,...sug.map(s=>({id:uid(),text:s.text,completed:false}))]);setSug(null);}} style={{fontSize:11,color:T.cPart,background:"none",border:"none",cursor:"pointer",fontFamily:"monospace",fontWeight:500}}>Accept all</button>
               </div>
               {sug.map((s,i)=>(
-                <div key={i} style={{display:"flex",gap:9,marginBottom:7,padding:"9px 11px",background:T.isDark?"rgba(181,143,255,0.09)":"rgba(98,48,200,0.07)",borderRadius:7,border:`0.5px solid ${T.isDark?"rgba(181,143,255,0.22)":"rgba(98,48,200,0.18)"}`}}>
+                <div key={s.text} style={{display:"flex",gap:9,marginBottom:7,padding:"9px 11px",background:T.isDark?"rgba(181,143,255,0.09)":"rgba(98,48,200,0.07)",borderRadius:7,border:`0.5px solid ${T.isDark?"rgba(181,143,255,0.22)":"rgba(98,48,200,0.18)"}`}}>
                   <div style={{flex:1}}>
                     <div style={{fontSize:12,color:T.isDark?"#C8B8FF":"#5230A0",fontWeight:600,marginBottom:2}}>{s.text}</div>
                     <div style={{fontSize:11,color:T.isDark?"#9080C8":"#7858C0"}}>{s.why}</div>
@@ -449,6 +454,7 @@ function TaskCard({ task, onUpdate, onStatusChange, onDelete, apiKey }) {
             </div>
           )}
           {sug!==null&&sug.length===0&&!suggesting && <div style={{fontSize:11,color:T.tx3,marginBottom:12,fontFamily:"monospace"}}>No suggestions — add subtasks manually.</div>}
+          {sugError && <div style={{fontSize:11,color:T.uOv,marginBottom:12,fontFamily:"monospace"}}>⚠ {sugError}</div>}
 
           {/* Actions */}
           <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center",paddingTop:11,borderTop:`0.5px solid ${T.border}`}}>
@@ -481,6 +487,7 @@ function AddModal({ onClose, onAdd, apiKey }) {
     try {
       const p = await parseNote(note.trim(), apiKey);
       onAdd({ id:uid(), raw:note.trim(), contact:p.contact||null, title:p.title||null, company:p.company||null, action:p.action||"Follow up", notes:p.notes||note.trim(), followUpDate:computeDate(p), priority:p.priority||"medium", category:["deals","partnerships","ops","other"].includes(p.category)?p.category:"other", recurrence:p.recurrence||null, subtasks:[], status:"not_started", createdAt:new Date().toISOString() });
+      setParsing(false);
       onClose();
     } catch { setError("Couldn't parse — try again"); setParsing(false); }
   };
@@ -518,7 +525,7 @@ function KanbanView({ tasks, onUpdate, onStatusChange, onDelete, apiKey }) {
         const colTasks = tasks.filter(t=>(t.status||"not_started")===key);
         const isOver   = dragOver===key;
         return (
-          <div key={key} onDragOver={e=>{e.preventDefault();setDragOver(key);}} onDragLeave={e=>{if(!e.currentTarget.contains(e.relatedTarget))setDragOver(null);}} onDrop={e=>{e.preventDefault();handleDrop(e.dataTransfer.getData("taskId"),key);}} style={{flex:1,minWidth:0,background:isOver?`${c}12`:T.surface,border:`0.5px solid ${isOver?c:T.border}`,borderRadius:14,display:"flex",flexDirection:"column",overflow:"hidden",transition:"all 0.18s"}}>
+          <div key={key} onDragOver={e=>{e.preventDefault();setDragOver(key);}} onDragLeave={e=>{if(!e.relatedTarget||!e.currentTarget.contains(e.relatedTarget))setDragOver(null);}} onDrop={e=>{e.preventDefault();handleDrop(e.dataTransfer.getData("taskId"),key);}} style={{flex:1,minWidth:0,background:isOver?`${c}12`:T.surface,border:`0.5px solid ${isOver?c:T.border}`,borderRadius:14,display:"flex",flexDirection:"column",overflow:"hidden",transition:"all 0.18s"}}>
             <div style={{padding:"14px 14px 13px",borderBottom:`0.5px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
               <div style={{display:"flex",alignItems:"center",gap:9}}><div style={{width:9,height:9,borderRadius:"50%",background:c}}/><span style={{fontSize:13,fontWeight:600,color:T.tx}}>{label}</span></div>
               <span style={{fontSize:11,color:T.tx3,fontFamily:"monospace"}}>{colTasks.length}</span>
@@ -576,7 +583,7 @@ function CalendarView({ tasks }) {
               <div key={day} onClick={()=>setSelected(p=>p===day?null:day)} style={{minHeight:68,background:isSel?T.raised:T.card,border:`0.5px solid ${isSel?T.borderHi:T.border}`,borderRadius:9,padding:"7px 8px",cursor:"pointer",transition:"all 0.12s"}}>
                 <div style={{fontSize:12,fontWeight:isToday?700:400,color:isToday?T.uTd:T.tx2,marginBottom:5,fontFamily:"monospace"}}>{day}</div>
                 <div style={{display:"flex",flexWrap:"wrap",gap:3}}>
-                  {tks.slice(0,7).map((t,i)=>{ const cat=getCat(T,t.category); return <div key={i} title={`${t.company||"—"}: ${t.action}`} style={{width:7,height:7,borderRadius:"50%",background:cat.dot}}/>; })}
+                  {tks.slice(0,7).map((t)=>{ const cat=getCat(T,t.category); return <div key={t.id} title={`${t.company||"—"}: ${t.action}`} style={{width:7,height:7,borderRadius:"50%",background:cat.dot}}/>; })}
                   {tks.length>7&&<span style={{fontSize:8,color:T.tx3,fontFamily:"monospace"}}>+{tks.length-7}</span>}
                 </div>
               </div>
@@ -613,10 +620,11 @@ function CalendarView({ tasks }) {
 }
 
 // ── ListView ───────────────────────────────────────────────────────────────
-function ListView({ tasks, onUpdate, onStatusChange, onDelete, apiKey, coachSuggestions, coachLoading, onCoach }) {
+function ListView({ tasks, onUpdate, onStatusChange, onDelete, apiKey, coachSuggestions, coachLoading, coachError, onCoach }) {
   const T = useT();
-  const [activeCat, setActiveCat] = useState("all");
-  const [showDone,  setShowDone]  = useState(false);
+  const [activeCat,   setActiveCat]   = useState("all");
+  const [showDone,    setShowDone]    = useState(false);
+  const [showAllDone, setShowAllDone] = useState(false);
 
   const active    = tasks.filter(t=>t.status!=="done");
   const done      = tasks.filter(t=>t.status==="done");
@@ -664,14 +672,19 @@ function ListView({ tasks, onUpdate, onStatusChange, onDelete, apiKey, coachSugg
             <button onClick={()=>setShowDone(p=>!p)} style={{fontSize:11,padding:"4px 13px",borderRadius:20,border:`0.5px solid ${T.border}`,background:"transparent",fontFamily:"monospace",color:T.tx3,cursor:"pointer",marginBottom:11}}>
               {showDone?"▼":"▶"} Completed ({done.length})
             </button>
-            {showDone&&done.slice(0,14).map(t=>{ const cat=getCat(T,t.category); return (
-              <div key={t.id} style={{display:"flex",alignItems:"center",gap:9,padding:"7px 11px",marginBottom:4,background:T.card,borderRadius:7,opacity:0.42,borderLeft:`3px solid ${cat.dot}`}}>
-                <span style={{color:T.sDone,fontSize:12,fontWeight:600}}>✓</span>
-                <span style={{fontSize:12,color:T.tx2,fontWeight:500}}>{t.company||t.contact||"—"}</span>
-                <span style={{color:T.tx3,fontSize:10,fontFamily:"monospace"}}>· {t.action}</span>
-                <button onClick={()=>onDelete(t.id)} style={{marginLeft:"auto",background:"none",border:"none",color:T.tx3,cursor:"pointer",fontSize:14,padding:0}}>×</button>
-              </div>
-            ); })}
+            {showDone&&(
+              <>
+                {(showAllDone?done:done.slice(0,14)).map(t=>{ const cat=getCat(T,t.category); return (
+                  <div key={t.id} style={{display:"flex",alignItems:"center",gap:9,padding:"7px 11px",marginBottom:4,background:T.card,borderRadius:7,opacity:0.42,borderLeft:`3px solid ${cat.dot}`}}>
+                    <span style={{color:T.sDone,fontSize:12,fontWeight:600}}>✓</span>
+                    <span style={{fontSize:12,color:T.tx2,fontWeight:500}}>{t.company||t.contact||"—"}</span>
+                    <span style={{color:T.tx3,fontSize:10,fontFamily:"monospace"}}>· {t.action}</span>
+                    <button onClick={()=>onDelete(t.id)} style={{marginLeft:"auto",background:"none",border:"none",color:T.tx3,cursor:"pointer",fontSize:14,padding:0}}>×</button>
+                  </div>
+                ); })}
+                {done.length>14&&<button onClick={()=>setShowAllDone(p=>!p)} style={{fontSize:11,padding:"4px 13px",borderRadius:20,border:`0.5px solid ${T.border}`,background:"transparent",fontFamily:"monospace",color:T.tx3,cursor:"pointer",marginTop:4}}>{showAllDone?`Show less`:`Show ${done.length-14} more`}</button>}
+              </>
+            )}
           </div>
         )}
       </div>
@@ -703,9 +716,10 @@ function ListView({ tasks, onUpdate, onStatusChange, onDelete, apiKey, coachSugg
             <button onClick={onCoach} disabled={coachLoading||!active.length} style={{fontSize:10,padding:"3px 11px",borderRadius:20,border:`1px solid ${T.coachC}`,background:"transparent",fontFamily:"monospace",color:T.coachC,opacity:coachLoading||!active.length?0.30:1,cursor:"pointer",fontWeight:600}}>{coachLoading?"Thinking…":"↺ Analyze"}</button>
           </div>
           <div style={{fontSize:11,color:T.tx3,marginBottom:14}}>Cross-pipeline priorities.</div>
-          {!coachSuggestions.length&&!coachLoading && <p style={{fontSize:12,color:T.tx3,margin:0,lineHeight:1.6}}>{active.length?"Hit Analyze for tactical suggestions.":"Log tasks to get started."}</p>}
+          {!coachSuggestions.length&&!coachLoading&&!coachError && <p style={{fontSize:12,color:T.tx3,margin:0,lineHeight:1.6}}>{active.length?"Hit Analyze for tactical suggestions.":"Log tasks to get started."}</p>}
+          {coachError && <p style={{fontSize:12,color:T.uOv,margin:0,fontFamily:"monospace"}}>⚠ {coachError}</p>}
           {coachSuggestions.map((s,i)=>{ const cat=s.category&&getCat(T,s.category), isHigh=s.urgency==="high"; const bgC=isHigh?(T.isDark?"rgba(255,184,63,0.12)":"rgba(173,94,0,0.09)"):(T.isDark?"rgba(181,143,255,0.12)":"rgba(98,48,200,0.09)"); return (
-            <div key={i} style={{padding:"10px 12px",marginBottom:10,borderRadius:8,background:bgC,borderLeft:`3px solid ${isHigh?T.cOps:T.cPart}`}}>
+            <div key={s.text} style={{padding:"10px 12px",marginBottom:10,borderRadius:8,background:bgC,borderLeft:`3px solid ${isHigh?T.cOps:T.cPart}`}}>
               <p style={{fontSize:12,color:T.isDark?(isHigh?"#FFD080":"#C8B8FF"):(isHigh?"#7A4000":"#4820A0"),lineHeight:1.5,margin:"0 0 5px",fontWeight:600}}>{s.text}</p>
               <div style={{display:"flex",justifyContent:"space-between"}}>
                 <p style={{fontSize:11,color:T.isDark?(isHigh?"#C08030":"#9070C8"):(isHigh?"#A06020":"#6040A0"),margin:0}}>{s.reason}</p>
@@ -724,14 +738,15 @@ function TasksPage({ tasks, onUpdate, onStatusChange, onDelete, onAdd, apiKey })
   const T = useT();
   const [view,    setView]    = useState("list");
   const [addOpen, setAddOpen] = useState(false);
-  const [coach,   setCoach]   = useState([]);
+  const [coach,        setCoach]        = useState([]);
   const [coachLoading, setCoachLoading] = useState(false);
+  const [coachError,   setCoachError]   = useState(null);
 
   const handleCoach = async () => {
     const active = tasks.filter(t=>t.status!=="done");
     if(!active.length||coachLoading) return;
-    setCoachLoading(true);
-    try { const s=await runCoach(active,apiKey); setCoach(Array.isArray(s)?s:[]); } catch {}
+    setCoachLoading(true); setCoachError(null);
+    try { const s=await runCoach(active,apiKey); setCoach(Array.isArray(s)?s:[]); } catch { setCoachError("Analysis failed — try again"); }
     setCoachLoading(false);
   };
 
@@ -751,7 +766,7 @@ function TasksPage({ tasks, onUpdate, onStatusChange, onDelete, onAdd, apiKey })
         </div>
       </div>
 
-      {view==="list"     && <ListView     tasks={tasks} onUpdate={onUpdate} onStatusChange={onStatusChange} onDelete={onDelete} apiKey={apiKey} coachSuggestions={coach} coachLoading={coachLoading} onCoach={handleCoach}/>}
+      {view==="list"     && <ListView     tasks={tasks} onUpdate={onUpdate} onStatusChange={onStatusChange} onDelete={onDelete} apiKey={apiKey} coachSuggestions={coach} coachLoading={coachLoading} coachError={coachError} onCoach={handleCoach}/>}
       {view==="kanban"   && <KanbanView   tasks={tasks} onUpdate={onUpdate} onStatusChange={onStatusChange} onDelete={onDelete} apiKey={apiKey}/>}
       {view==="calendar" && <CalendarView tasks={tasks}/>}
 
@@ -770,11 +785,16 @@ function ProposalGenerator({ onApplied, apiKey }) {
   const [activeIdx,    setActiveIdx]    = useState(0);
   const [applyVariant, setApplyVariant] = useState(null);
   const [copied,       setCopied]       = useState(false);
+  const [genError,     setGenError]     = useState(null);
 
   const generate = async () => {
     if(!jobDesc.trim()||generating) return;
-    setGenerating(true); setResult(null);
-    try { const r=await generateProposals(jobDesc.trim(),apiKey); setResult(r); setActiveIdx(0); } catch(e){console.error(e);}
+    setGenerating(true); setResult(null); setGenError(null);
+    try {
+      const r=await generateProposals(jobDesc.trim(),apiKey);
+      if(!r?.variants?.length) throw new Error("No variants returned");
+      setResult(r); setActiveIdx(0);
+    } catch(e){ setGenError("Couldn't generate proposals — try again"); }
     setGenerating(false);
   };
 
@@ -785,12 +805,13 @@ function ProposalGenerator({ onApplied, apiKey }) {
     <div>
       <div style={{fontSize:10,fontFamily:"monospace",color:T.tx3,letterSpacing:"0.16em",textTransform:"uppercase",marginBottom:12,fontWeight:700}}>Paste Job Description</div>
       <textarea value={jobDesc} onChange={e=>setJobDesc(e.target.value)} onKeyDown={e=>{if((e.metaKey||e.ctrlKey)&&e.key==="Enter")generate();}} rows={8} placeholder={"Paste the full Upwork job description here...\n\nThe AI will write 3 tailored cover letters in the Insendra voice, then ask if you applied."} style={{width:"100%",background:T.card,border:`0.5px solid ${T.borderMd}`,borderRadius:11,padding:"14px 16px",color:T.tx,fontFamily:"monospace",fontSize:12,lineHeight:1.75,outline:"none",resize:"vertical",marginBottom:10}}/>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:genError?10:24}}>
         <span style={{fontSize:11,color:T.tx3,fontFamily:"monospace"}}>⌘+Enter to generate</span>
         <button onClick={generate} disabled={!jobDesc.trim()||generating} style={{background:jobDesc.trim()&&!generating?T.addBtn:T.raised,color:jobDesc.trim()&&!generating?"#FFF":T.tx3,border:"none",borderRadius:10,padding:"11px 24px",fontFamily:"monospace",fontSize:12,fontWeight:700,cursor:"pointer",transition:"all 0.15s"}}>
           {generating?"Writing proposals…":"✦ Write Proposals"}
         </button>
       </div>
+      {genError && <div style={{fontSize:12,color:T.uOv,marginBottom:18,fontFamily:"monospace",fontWeight:500}}>⚠ {genError}</div>}
 
       {result && (
         <div style={{background:T.surface,borderRadius:14,border:`0.5px solid ${T.border}`,overflow:"hidden"}}>
@@ -806,12 +827,14 @@ function ProposalGenerator({ onApplied, apiKey }) {
             ); })}
           </div>
           <div style={{padding:"20px 20px 16px"}}>
-            <div style={{fontSize:13,color:T.tx,lineHeight:1.85,whiteSpace:"pre-wrap",marginBottom:18}}>{result.variants[activeIdx].text}</div>
+            {(() => { const safeIdx=Math.min(activeIdx,result.variants.length-1); const v=result.variants[safeIdx]; return v ? (<>
+            <div style={{fontSize:13,color:T.tx,lineHeight:1.85,whiteSpace:"pre-wrap",marginBottom:18}}>{v.text}</div>
             <div style={{display:"flex",gap:10,paddingTop:14,borderTop:`0.5px solid ${T.border}`,flexWrap:"wrap"}}>
-              <button onClick={()=>copy(result.variants[activeIdx].text)} style={{fontSize:12,padding:"9px 18px",borderRadius:9,border:`0.5px solid ${T.border}`,background:"transparent",color:copied?T.sDone:T.tx2,cursor:"pointer",fontFamily:"monospace",fontWeight:500,transition:"color 0.2s"}}>{copied?"Copied ✓":"Copy"}</button>
-              <button onClick={()=>setApplyVariant(result.variants[activeIdx])} style={{fontSize:12,padding:"9px 22px",borderRadius:9,background:T.sDone,color:"#fff",border:"none",cursor:"pointer",fontFamily:"monospace",fontWeight:700}}>I Applied With This →</button>
+              <button onClick={()=>copy(v.text)} style={{fontSize:12,padding:"9px 18px",borderRadius:9,border:`0.5px solid ${T.border}`,background:"transparent",color:copied?T.sDone:T.tx2,cursor:"pointer",fontFamily:"monospace",fontWeight:500,transition:"color 0.2s"}}>{copied?"Copied ✓":"Copy"}</button>
+              <button onClick={()=>setApplyVariant(v)} style={{fontSize:12,padding:"9px 22px",borderRadius:9,background:T.sDone,color:"#fff",border:"none",cursor:"pointer",fontFamily:"monospace",fontWeight:700}}>I Applied With This →</button>
               <button onClick={()=>setResult(null)} style={{marginLeft:"auto",fontSize:11,padding:"9px 16px",borderRadius:9,border:`0.5px solid ${T.border}`,background:"transparent",color:T.tx3,cursor:"pointer",fontFamily:"monospace"}}>Start over</button>
             </div>
+            </>) : null; })()}
           </div>
         </div>
       )}
@@ -952,31 +975,20 @@ function App() {
   const [apiKey,    setApiKey]    = useState(() => lsGet(APIKEY_KEY)||"");
   const [isDark,    setIsDark]    = useState(true);
   const [page,      setPage]      = useState("tasks");
-  const [tasks,     setTasks]     = useState([]);
-  const [proposals, setProposals] = useState([]);
-  const [toast,     setToast]     = useState(null);
+  const [tasks, setTasks] = useState(()=>{
+    try { const saved=lsGet(TASKS_KEY); if(saved?.length) return saved.map(t=>({...t,status:t.status||(t.completed?"done":"not_started")})); } catch{}
+    return SEED_TASKS;
+  });
+  const [proposals, setProposals] = useState(()=>{
+    try { const saved=lsGet(PROPOSALS_KEY); if(saved) return saved; } catch{}
+    return [];
+  });
+  const [toast, setToast] = useState(null);
 
-  const tasksLoaded     = useRef(false);
-  const proposalsLoaded = useRef(false);
   const T = isDark ? DARK : LIGHT;
 
-  // Load tasks
-  useEffect(()=>{
-    let found = false;
-    try { const saved=lsGet(TASKS_KEY); if(saved?.length){ setTasks(saved.map(t=>({...t,status:t.status||(t.completed?"done":"not_started")}))); found=true; } } catch{}
-    if(!found) setTasks(SEED_TASKS);
-    tasksLoaded.current = true;
-  },[]);
-
-  useEffect(()=>{ if(!tasksLoaded.current) return; lsSet(TASKS_KEY, tasks); },[tasks]);
-
-  // Load proposals
-  useEffect(()=>{
-    try { const saved=lsGet(PROPOSALS_KEY); if(saved) setProposals(saved); } catch{}
-    proposalsLoaded.current = true;
-  },[]);
-
-  useEffect(()=>{ if(!proposalsLoaded.current) return; lsSet(PROPOSALS_KEY, proposals); },[proposals]);
+  useEffect(()=>{ lsSet(TASKS_KEY, tasks); },[tasks]);
+  useEffect(()=>{ lsSet(PROPOSALS_KEY, proposals); },[proposals]);
 
   const showToast = (msg, type="ok") => { setToast({msg,type}); setTimeout(()=>setToast(null),3000); };
 
